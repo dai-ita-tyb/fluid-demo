@@ -1,0 +1,663 @@
+
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>2D Channel Flow: Draw Obstacles + Velocity Vectors/Contour (Stable Fluids)</title>
+  <style>
+    body { margin:0; background:#111; color:#ddd; font-family: system-ui, sans-serif; }
+    .bar { padding:10px 14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+    .bar label { font-size:12px; opacity:.9; white-space:nowrap; }
+    canvas { display:block; width:100vw; height:calc(100vh - 84px); background:#000; touch-action:none; }
+    .hint { font-size:12px; opacity:.85; }
+    .chip { font-size:12px; padding:2px 8px; border:1px solid #444; border-radius:999px; opacity:.9; }
+    button { background:#222; color:#ddd; border:1px solid #444; border-radius:6px; padding:6px 10px; cursor:pointer;}
+    button:hover { background:#2a2a2a; }
+    select, input { vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span class="hint">
+      入口(左)→出口(右)。モード：流れ/描く/消す。 表示：染料 or 速度コンター。 V:ベクトル切替 / R:流れリセット（障害物は保持）
+    </span>
+
+    <label>操作モード
+      <select id="mode">
+        <option value="flow" selected>流れ（注入）</option>
+        <option value="draw">障害物を描く</option>
+        <option value="erase">障害物を消す</option>
+      </select>
+    </label>
+
+    <label>表示
+      <select id="view">
+        <option value="dye" selected>染料（Dye）</option>
+        <option value="speed">速度コンター（|u|）</option>
+      </select>
+    </label>
+
+    <label><input id="showVec" type="checkbox" checked> 速度ベクトル</label>
+
+    <label>ベクトル間引き
+      <input id="vecStep" type="range" min="4" max="24" value="10">
+      <span id="vecStepVal" class="chip">10</span>
+    </label>
+
+    <label>ベクトル倍率
+      <input id="vecScale" type="range" min="0.5" max="8" step="0.1" value="3.2">
+      <span id="vecScaleVal" class="chip">3.2</span>
+    </label>
+
+    <label>ブラシ半径
+      <input id="brush" type="range" min="1" max="16" value="6">
+      <span id="brushVal" class="chip">6</span>
+    </label>
+
+    <button id="clearObs">障害物クリア</button>
+    <button id="resetFlow">流れリセット</button>
+
+    <span style="flex-basis:100%; height:0;"></span>
+
+    <label>格子
+      <select id="grid">
+        <option value="96">96</option>
+        <option value="128" selected>128</option>
+        <option value="160">160</option>
+        <option value="192">192</option>
+      </select>
+    </label>
+
+    <label>入口速度
+      <input id="uin" type="range" min="0" max="3" step="0.05" value="1.4">
+      <span id="uinVal" class="chip">1.40</span>
+    </label>
+
+    <label>入口高さ
+      <input id="inH" type="range" min="0.15" max="0.9" step="0.01" value="0.55">
+      <span id="inHVal" class="chip">0.55</span>
+    </label>
+
+    <label>反復
+      <input id="iters" type="range" min="5" max="60" value="24">
+      <span id="itersVal" class="chip">24</span>
+    </label>
+
+    <label>粘性
+      <input id="visc" type="range" min="0" max="0.004" step="0.0002" value="0.0008">
+      <span id="viscVal" class="chip">0.0008</span>
+    </label>
+
+    <label>拡散
+      <input id="diff" type="range" min="0" max="0.01" step="0.0005" value="0.0015">
+      <span id="diffVal" class="chip">0.0015</span>
+    </label>
+
+    <label>減衰
+      <input id="fade" type="range" min="0.94" max="1.0" step="0.001" value="0.996">
+      <span id="fadeVal" class="chip">0.996</span>
+    </label>
+  </div>
+
+  <canvas id="c"></canvas>
+
+<script>
+/**
+ * Stable Fluids（Stam）系：半ラグランジュ移流 + 投影（発散除去）で非圧縮っぽく安定に動かす。[1](https://qiita.com/ponsuke0531/items/4629626a3e84bcd9398f)
+ * 毎フレーム更新は requestAnimationFrame() を使用。[2](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-executionpolicy?view=powershell-7.5)
+ */
+
+// ===== UI =====
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d', { alpha:false });
+
+const modeSel = document.getElementById('mode');
+const viewSel = document.getElementById('view');
+const showVec = document.getElementById('showVec');
+const vecStep = document.getElementById('vecStep');
+const vecScale = document.getElementById('vecScale');
+
+const brush = document.getElementById('brush');
+const clearObsBtn = document.getElementById('clearObs');
+const resetFlowBtn = document.getElementById('resetFlow');
+
+const gridSel = document.getElementById('grid');
+const uin = document.getElementById('uin');
+const inH = document.getElementById('inH');
+const iters = document.getElementById('iters');
+const visc = document.getElementById('visc');
+const diff = document.getElementById('diff');
+const fade = document.getElementById('fade');
+
+const brushVal = document.getElementById('brushVal');
+const uinVal = document.getElementById('uinVal');
+const inHVal = document.getElementById('inHVal');
+const itersVal = document.getElementById('itersVal');
+const viscVal = document.getElementById('viscVal');
+const diffVal = document.getElementById('diffVal');
+const fadeVal = document.getElementById('fadeVal');
+const vecStepVal = document.getElementById('vecStepVal');
+const vecScaleVal = document.getElementById('vecScaleVal');
+
+function syncLabels(){
+  brushVal.textContent = brush.value;
+  uinVal.textContent = (+uin.value).toFixed(2);
+  inHVal.textContent = (+inH.value).toFixed(2);
+  itersVal.textContent = iters.value;
+  viscVal.textContent = (+visc.value).toFixed(4);
+  diffVal.textContent = (+diff.value).toFixed(4);
+  fadeVal.textContent = (+fade.value).toFixed(3);
+  vecStepVal.textContent = vecStep.value;
+  vecScaleVal.textContent = (+vecScale.value).toFixed(1);
+}
+[modeSel, viewSel, showVec, vecStep, vecScale, brush, gridSel, uin, inH, iters, visc, diff, fade]
+  .forEach(el => el.addEventListener('input', syncLabels));
+syncLabels();
+
+// ===== Simulation arrays =====
+let N = +gridSel.value;
+let size, u, v, u0, v0, dens, dens0, p, divv, solid;
+
+function IX(x,y){ return x + (N+2)*y; }
+
+function alloc(){
+  size = (N+2)*(N+2);
+  u = new Float32Array(size);
+  v = new Float32Array(size);
+  u0 = new Float32Array(size);
+  v0 = new Float32Array(size);
+  dens = new Float32Array(size);
+  dens0 = new Float32Array(size);
+  p = new Float32Array(size);
+  divv = new Float32Array(size);
+  solid = new Uint8Array(size); // 1: solid, 0: fluid
+  applyBaseWalls();
+}
+alloc();
+
+function resetFlow(){
+  u.fill(0); v.fill(0); u0.fill(0); v0.fill(0);
+  dens.fill(0); dens0.fill(0);
+  p.fill(0); divv.fill(0);
+}
+function clearObstacles(){
+  for(let j=1;j<=N;j++){
+    for(let i=1;i<=N;i++){
+      solid[IX(i,j)] = 0;
+    }
+  }
+  applyBaseWalls();
+}
+resetFlowBtn.onclick = resetFlow;
+clearObsBtn.onclick = clearObstacles;
+
+gridSel.addEventListener('change', ()=>{
+  N = +gridSel.value;
+  alloc();
+  resetFlow();
+});
+
+// ===== Base walls: top/bottom are walls (solid) =====
+function applyBaseWalls(){
+  for(let i=0;i<=N+1;i++){
+    solid[IX(i,0)] = 1;
+    solid[IX(i,N+1)] = 1;
+  }
+}
+applyBaseWalls();
+
+// ===== Obstacle painting =====
+function paintObstacle(nx, ny, rCells, makeSolid){
+  const cx = Math.floor(nx*N) + 1;
+  const cy = Math.floor(ny*N) + 1;
+
+  for(let j=-rCells; j<=rCells; j++){
+    for(let i=-rCells; i<=rCells; i++){
+      const ii = cx + i;
+      const jj = cy + j;
+      if (ii<1 || ii>N || jj<1 || jj>N) continue;
+      if (i*i + j*j > rCells*rCells) continue;
+
+      const id = IX(ii,jj);
+      solid[id] = makeSolid ? 1 : 0;
+
+      if (makeSolid){
+        u[id]=0; v[id]=0; u0[id]=0; v0[id]=0;
+        dens[id]=0; dens0[id]=0;
+      }
+    }
+  }
+  applyBaseWalls();
+}
+
+// ===== Boundary conditions =====
+let dt = 0.016;
+
+function applyObstacleBoundary(b, x){
+  for(let j=1;j<=N;j++){
+    for(let i=1;i<=N;i++){
+      const id = IX(i,j);
+      if (solid[id]) {
+        x[id] = 0;
+      } else {
+        // simple no-slip-ish damping near solids
+        if (b===1){
+          if (solid[IX(i-1,j)] || solid[IX(i+1,j)]) x[id] *= 0.2;
+        }
+        if (b===2){
+          if (solid[IX(i,j-1)] || solid[IX(i,j+1)]) x[id] *= 0.2;
+        }
+      }
+    }
+  }
+}
+
+function set_bnd(b, x){
+  // top/bottom reflect
+  for (let i=1;i<=N;i++){
+    x[IX(i,0)]   = b===2 ? -x[IX(i,1)] : x[IX(i,1)];
+    x[IX(i,N+1)] = b===2 ? -x[IX(i,N)] : x[IX(i,N)];
+  }
+  // corners
+  x[IX(0,0)]     = x[IX(1,0)];
+  x[IX(0,N+1)]   = x[IX(1,N+1)];
+  x[IX(N+1,0)]   = x[IX(N,0)];
+  x[IX(N+1,N+1)] = x[IX(N,N+1)];
+
+  applyObstacleBoundary(b, x);
+}
+
+// ===== Linear solver (Gauss-Seidel) =====
+function lin_solve(b, x, x0, a, c){
+  const iter = +iters.value;
+  for (let k=0;k<iter;k++){
+    for (let j=1;j<=N;j++){
+      for (let i=1;i<=N;i++){
+        const id = IX(i,j);
+        if (solid[id]) { x[id]=0; continue; }
+        x[id] = (x0[id] + a*(x[IX(i-1,j)] + x[IX(i+1,j)] + x[IX(i,j-1)] + x[IX(i,j+1)]))/c;
+      }
+    }
+    set_bnd(b,x);
+  }
+}
+
+function diffuse(b, x, x0, diffCoef){
+  const a = dt*diffCoef*N*N;
+  lin_solve(b, x, x0, a, 1+4*a);
+}
+
+function advect(b, d, d0, u, v){
+  const dt0 = dt*N;
+  for (let j=1;j<=N;j++){
+    for (let i=1;i<=N;i++){
+      const id = IX(i,j);
+      if (solid[id]) { d[id]=0; continue; }
+
+      let x = i - dt0*u[id];
+      let y = j - dt0*v[id];
+      if (x<0.5) x=0.5; if (x>N+0.5) x=N+0.5;
+      if (y<0.5) y=0.5; if (y>N+0.5) y=N+0.5;
+
+      const i0 = Math.floor(x), i1 = i0+1;
+      const j0 = Math.floor(y), j1 = j0+1;
+      const s1 = x - i0, s0 = 1-s1;
+      const t1 = y - j0, t0 = 1-t1;
+
+      d[id] =
+        s0*(t0*d0[IX(i0,j0)] + t1*d0[IX(i0,j1)]) +
+        s1*(t0*d0[IX(i1,j0)] + t1*d0[IX(i1,j1)]);
+    }
+  }
+  set_bnd(b,d);
+}
+
+function project(u, v, p, div){
+  for (let j=1;j<=N;j++){
+    for (let i=1;i<=N;i++){
+      const id = IX(i,j);
+      if (solid[id]) { div[id]=0; p[id]=0; continue; }
+      div[id] = -0.5*(u[IX(i+1,j)] - u[IX(i-1,j)] + v[IX(i,j+1)] - v[IX(i,j-1)]) / N;
+      p[id] = 0;
+    }
+  }
+  set_bnd(0, div); set_bnd(0, p);
+  lin_solve(0, p, div, 1, 4);
+
+  for (let j=1;j<=N;j++){
+    for (let i=1;i<=N;i++){
+      const id = IX(i,j);
+      if (solid[id]) { u[id]=0; v[id]=0; continue; }
+      u[id] -= 0.5*N*(p[IX(i+1,j)] - p[IX(i-1,j)]);
+      v[id] -= 0.5*N*(p[IX(i,j+1)] - p[IX(i,j-1)]);
+    }
+  }
+  set_bnd(1, u); set_bnd(2, v);
+}
+
+// ===== Inlet / Outlet =====
+function applyInletOutlet(){
+  const U = +uin.value;
+  const hFrac = +inH.value;
+  const h = Math.floor(hFrac * N);
+  const j0 = Math.max(2, Math.floor((N - h)/2));
+  const j1 = Math.min(N-1, j0 + h);
+
+  // inlet at x=1
+  for(let j=1;j<=N;j++){
+    const id = IX(1,j);
+    if (j>=j0 && j<=j1 && !solid[id]){
+      u[id] = U;
+      v[id] = 0;
+      dens[id] += 1.5; // dye for visibility
+    } else {
+      u[id] *= 0.2;
+      v[id] *= 0.2;
+    }
+  }
+
+  // outlet at x=N (zero-gradient)
+  for(let j=1;j<=N;j++){
+    const id = IX(N,j);
+    const im1 = IX(N-1,j);
+    if (!solid[id]){
+      u[id] = u[im1];
+      v[id] = v[im1];
+      dens[id] = dens[im1];
+    } else {
+      u[id]=0; v[id]=0; dens[id]=0;
+    }
+  }
+
+  // ghost cells
+  for(let j=1;j<=N;j++){
+    u[IX(0,j)] = u[IX(1,j)];
+    v[IX(0,j)] = v[IX(1,j)];
+    dens[IX(0,j)] = dens[IX(1,j)];
+
+    u[IX(N+1,j)] = u[IX(N,j)];
+    v[IX(N+1,j)] = v[IX(N,j)];
+    dens[IX(N+1,j)] = dens[IX(N,j)];
+  }
+}
+
+// ===== Steps =====
+function vel_step(u, v, u0, v0, viscCoef){
+  for (let i=0;i<size;i++){ u[i]+=u0[i]; v[i]+=v0[i]; u0[i]=0; v0[i]=0; }
+  diffuse(1, u0, u, viscCoef);
+  diffuse(2, v0, v, viscCoef);
+  project(u0, v0, p, divv);
+  advect(1, u, u0, u0, v0);
+  advect(2, v, v0, u0, v0);
+  project(u, v, p, divv);
+}
+
+function dens_step(x, x0, u, v, diffCoef){
+  for (let i=0;i<size;i++){ x[i]+=x0[i]; x0[i]=0; }
+  diffuse(0, x0, x, diffCoef);
+  advect(0, x, x0, u, v);
+  const f = +fade.value;
+  for (let i=0;i<size;i++){ x[i]*=f; if (solid[i]) x[i]=0; }
+}
+
+// ===== Flow injection (drag) =====
+function splat(nx, ny, fx, fy, amount){
+  const x = Math.floor(nx*N)+1;
+  const y = Math.floor(ny*N)+1;
+  const r = 3;
+  for (let j=-r;j<=r;j++){
+    for (let i=-r;i<=r;i++){
+      const ii = x+i, jj = y+j;
+      if (ii<1||ii>N||jj<1||jj>N) continue;
+      const id = IX(ii,jj);
+      if (solid[id]) continue;
+      const w = Math.exp(-(i*i+j*j)/(r*r));
+      u0[id] += fx*w;
+      v0[id] += fy*w;
+      dens0[id] += amount*w;
+    }
+  }
+}
+
+// ===== Pointer input =====
+const pointer = {down:false, px:0, py:0, rect:null};
+
+canvas.addEventListener('pointerdown', (e)=>{
+  pointer.down = true;
+  pointer.rect = canvas.getBoundingClientRect();
+  pointer.px = e.clientX; pointer.py = e.clientY;
+  canvas.setPointerCapture(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', (e)=>{
+  if (!pointer.down) return;
+  const r = pointer.rect;
+  const nx = (e.clientX - r.left) / r.width;
+  const ny = (e.clientY - r.top) / r.height;
+
+  const dx = (e.clientX - pointer.px) / r.width;
+  const dy = (e.clientY - pointer.py) / r.height;
+  pointer.px = e.clientX; pointer.py = e.clientY;
+
+  const mode = modeSel.value;
+  const br = +brush.value;
+
+  if (mode === 'flow'){
+    const fx = dx * 90;
+    const fy = dy * 90;
+    const amount = 10.0;
+    splat(nx, ny, fx, fy, amount);
+  } else if (mode === 'draw'){
+    paintObstacle(nx, ny, br, true);
+  } else if (mode === 'erase'){
+    paintObstacle(nx, ny, br, false);
+  }
+});
+
+canvas.addEventListener('pointerup', ()=>{ pointer.down=false; });
+canvas.addEventListener('pointercancel', ()=>{ pointer.down=false; });
+
+window.addEventListener('keydown', (e)=>{
+  const k = e.key.toLowerCase();
+  if (k === 'r') resetFlow();
+  if (k === 'v') showVec.checked = !showVec.checked;
+});
+
+// ===== Render (offscreen at NxN, then scale to screen) =====
+const off = document.createElement('canvas');
+const offCtx = off.getContext('2d', { willReadFrequently: false });
+function resize(){
+  const r = canvas.getBoundingClientRect();
+  const dpr = Math.max(1, window.devicePixelRatio || 1);
+  canvas.width = Math.floor(r.width*dpr);
+  canvas.height = Math.floor(r.height*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+function ensureOffscreen(){
+  if (off.width !== N || off.height !== N){
+    off.width = N;
+    off.height = N;
+  }
+}
+ensureOffscreen();
+
+function hsvToRgb(h, s, v){
+  // h:0..1
+  const i = Math.floor(h*6);
+  const f = h*6 - i;
+  const p = v*(1-s);
+  const q = v*(1-f*s);
+  const t = v*(1-(1-f)*s);
+  let r,g,b;
+  switch(i%6){
+    case 0: r=v,g=t,b=p; break;
+    case 1: r=q,g=v,b=p; break;
+    case 2: r=p,g=v,b=t; break;
+    case 3: r=p,g=q,b=v; break;
+    case 4: r=t,g=p,b=v; break;
+    case 5: r=v,g=p,b=q; break;
+  }
+  return [Math.floor(r*255), Math.floor(g*255), Math.floor(b*255)];
+}
+
+// speed normalization (smooth max to reduce flicker)
+let speedMaxSmooth = 1e-6;
+
+function renderField(){
+  ensureOffscreen();
+  const img = offCtx.createImageData(N, N);
+  const data = img.data;
+
+  let curMax = 1e-6;
+  if (viewSel.value === 'speed'){
+    for(let j=1;j<=N;j++){
+      for(let i=1;i<=N;i++){
+        const id = IX(i,j);
+        if (solid[id]) continue;
+        const sp = Math.hypot(u[id], v[id]);
+        if (sp > curMax) curMax = sp;
+      }
+    }
+    speedMaxSmooth = Math.max(curMax, speedMaxSmooth*0.97);
+  }
+
+  for(let y=0; y<N; y++){
+    const j = y+1;
+    for(let x=0; x<N; x++){
+      const i = x+1;
+      const id = IX(i,j);
+      const k = (x + y*N)*4;
+
+      if (solid[id]){
+        data[k+0]=70; data[k+1]=70; data[k+2]=70; data[k+3]=255;
+        continue;
+      }
+
+      if (viewSel.value === 'dye'){
+        const d = dens[id];
+        const vv = Math.max(0, Math.min(255, d*10));
+        data[k+0] = Math.min(255, vv*0.9);
+        data[k+1] = Math.min(255, vv*0.7);
+        data[k+2] = Math.min(255, 180 + vv*0.3);
+        data[k+3] = 255;
+      } else {
+        // speed contour (colormap)
+        const sp = Math.hypot(u[id], v[id]);
+        const t = Math.max(0, Math.min(1, sp / (speedMaxSmooth + 1e-9)));
+        // blue->green->yellow->red (HSV 0.66..0)
+        const h = (0.66*(1-t));
+        const [rC,gC,bC] = hsvToRgb(h, 1.0, 1.0);
+        // darken low speeds
+        const scale = 0.15 + 0.85*t;
+        data[k+0] = Math.floor(rC*scale);
+        data[k+1] = Math.floor(gC*scale);
+        data[k+2] = Math.floor(bC*scale);
+        data[k+3] = 255;
+      }
+    }
+  }
+
+  offCtx.putImageData(img, 0, 0);
+
+  // scale to screen
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  ctx.imageSmoothingEnabled = true;
+  ctx.clearRect(0,0,w,h);
+  ctx.drawImage(off, 0,0, w,h);
+}
+
+function drawVectors(){
+  if (!showVec.checked) return;
+
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const step = +vecStep.value;
+  const sc = +vecScale.value;
+
+  // arrow styling
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.strokeStyle = '#ffffff';
+  ctx.fillStyle = '#ffffff';
+  ctx.lineWidth = 1;
+
+  // arrow head size in pixels
+  const head = 4;
+
+  // map grid cell center to canvas
+  for(let j=1; j<=N; j+=step){
+    for(let i=1; i<=N; i+=step){
+      const id = IX(i,j);
+      if (solid[id]) continue;
+
+      const ux = u[id];
+      const vy = v[id];
+      const mag = Math.hypot(ux, vy);
+      if (mag < 1e-3) continue;
+
+      const x0 = ( (i-0.5) / N ) * w;
+      const y0 = ( (j-0.5) / N ) * h;
+
+      // scale vector to pixel
+      const sx = ux * sc * (w/N);
+      const sy = vy * sc * (h/N);
+
+      // clamp to avoid huge arrows
+      const maxLen = 18;
+      const len = Math.hypot(sx, sy);
+      const factor = len > maxLen ? (maxLen/len) : 1.0;
+
+      const x1 = x0 + sx*factor;
+      const y1 = y0 + sy*factor;
+
+      // color by magnitude (optional)
+      const t = Math.max(0, Math.min(1, mag / (speedMaxSmooth + 1e-9)));
+      ctx.globalAlpha = 0.25 + 0.75*t;
+
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.stroke();
+
+      // arrow head
+      const ang = Math.atan2(y1-y0, x1-x0);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x1 - head*Math.cos(ang - Math.PI/6), y1 - head*Math.sin(ang - Math.PI/6));
+      ctx.lineTo(x1 - head*Math.cos(ang + Math.PI/6), y1 - head*Math.sin(ang + Math.PI/6));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
+// ===== Main loop =====
+let last = performance.now();
+function frame(t){
+  const elapsed = (t - last)/1000;
+  last = t;
+  dt = Math.min(0.03, Math.max(0.008, elapsed));
+
+  applyBaseWalls();
+
+  vel_step(u, v, u0, v0, +visc.value);
+  dens_step(dens, dens0, u, v, +diff.value);
+
+  applyInletOutlet();
+
+  renderField();
+  drawVectors();
+
+  // requestAnimationFrame is one-shot; call again for continuous animation [2](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-executionpolicy?view=powershell-7.5)
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
+``
