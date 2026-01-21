@@ -2,662 +2,1067 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>2D Channel Flow: Draw Obstacles + Velocity Vectors/Contour (Stable Fluids)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Interactive Flow Lab (Canvas) — Vortex Shedding + Color LIC</title>
   <style>
-    body { margin:0; background:#111; color:#ddd; font-family: system-ui, sans-serif; }
-    .bar { padding:10px 14px; display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
-    .bar label { font-size:12px; opacity:.9; white-space:nowrap; }
-    canvas { display:block; width:100vw; height:calc(100vh - 84px); background:#000; touch-action:none; }
-    .hint { font-size:12px; opacity:.85; }
-    .chip { font-size:12px; padding:2px 8px; border:1px solid #444; border-radius:999px; opacity:.9; }
-    button { background:#222; color:#ddd; border:1px solid #444; border-radius:6px; padding:6px 10px; cursor:pointer;}
-    button:hover { background:#2a2a2a; }
-    select, input { vertical-align: middle; }
+    :root{
+      color-scheme: dark;
+      --bg:#0b1020;
+      --panel: rgba(255,255,255,0.06);
+      --text: rgba(255,255,255,0.92);
+      --muted: rgba(255,255,255,0.65);
+      --accent: #7dd3fc;
+      --danger: #fb7185;
+      --ok: #86efac;
+      --chip: rgba(255,255,255,0.10);
+    }
+    html,body{
+      height:100%; margin:0;
+      background: radial-gradient(1200px 800px at 30% 20%, #14204a, var(--bg));
+      color:var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+                   "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+    }
+    .wrap{ display:grid; grid-template-columns: 360px 1fr; gap:14px; height:100%; padding:14px; box-sizing:border-box; }
+    .panel{
+      background:var(--panel);
+      border:1px solid rgba(255,255,255,0.10);
+      border-radius:16px;
+      padding:14px;
+      backdrop-filter: blur(10px);
+      overflow:auto;
+    }
+    h1{ font-size:16px; margin:0 0 10px; letter-spacing:0.3px; }
+    .desc{ font-size:12px; color:var(--muted); line-height:1.5; margin-bottom:12px; }
+
+    .row{ display:grid; grid-template-columns: 1fr auto; gap:10px; align-items:center; margin:10px 0; }
+    .row label{ font-size:12px; color:var(--muted); }
+    .row input[type="range"]{ width:100%; }
+    .val{ font-variant-numeric: tabular-nums; font-size:12px; color:var(--text); opacity:0.92; }
+
+    .btns{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px; }
+    button{
+      appearance:none;
+      border:1px solid rgba(255,255,255,0.15);
+      background: rgba(255,255,255,0.08);
+      color:var(--text);
+      padding:10px 10px;
+      border-radius:12px;
+      cursor:pointer;
+      font-weight:800;
+    }
+    button:hover{ border-color: rgba(255,255,255,0.28); }
+    button.danger{ border-color: rgba(251,113,133,0.35); background: rgba(251,113,133,0.12); }
+    button.ok{ border-color: rgba(134,239,172,0.35); background: rgba(134,239,172,0.12); }
+    button.toggleOn{ border-color: rgba(125,211,252,0.55); background: rgba(125,211,252,0.18); }
+
+    .chips{ display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top: 10px; }
+    .chip{
+      border:1px solid rgba(255,255,255,0.14);
+      background: var(--chip);
+      border-radius:12px;
+      padding:10px;
+      font-size:12px;
+      color: rgba(255,255,255,0.85);
+      display:grid;
+      gap:8px;
+    }
+    .chipTitle{ font-weight:800; color: rgba(255,255,255,0.92); }
+    .seg{ display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; }
+    .seg button{ padding:8px 8px; font-weight:800; }
+
+    .canvasWrap{ position:relative; }
+    canvas{
+      width:100%; height:100%;
+      display:block;
+      border-radius:16px;
+      border:1px solid rgba(255,255,255,0.10);
+      background:#070a14;
+    }
+    .hud{
+      position:absolute;
+      left:12px; top:12px;
+      padding:8px 10px;
+      border-radius:12px;
+      background: rgba(0,0,0,0.35);
+      border:1px solid rgba(255,255,255,0.12);
+      font-size:12px;
+      color: rgba(255,255,255,0.85);
+      line-height:1.4;
+      pointer-events:none;
+      white-space: nowrap;
+    }
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background: rgba(255,255,255,0.12);
+      border:1px solid rgba(255,255,255,0.14);
+      padding:0 6px;
+      border-radius:8px;
+    }
+    .foot{ margin-top:14px; font-size:11px; color:var(--muted); line-height:1.5; }
+
+
+    #signatureText{
+      position: absolute;
+      right: 14px;
+      bottom: 12px;
+      font-size: 14px;
+      color: rgba(255,255,255,0.88);
+      background: rgba(0,0,0,0.25);
+      border: 1px solid rgba(255,255,255,0.14);
+      padding: 6px 10px;
+      border-radius: 10px;
+      pointer-events: none; /* ★操作を邪魔しない */
+      user-select: none;
+      backdrop-filter: blur(6px);
+      filter: drop-shadow(0 2px 6px rgba(0,0,0,0.45));
+      letter-spacing: 0.2px;
+    }
+
   </style>
 </head>
+
 <body>
-  <div class="bar">
-    <span class="hint">
-      入口(左)→出口(右)。モード：流れ/描く/消す。 表示：染料 or 速度コンター。 V:ベクトル切替 / R:流れリセット（障害物は保持）
-    </span>
+<div class="wrap">
+  <div class="panel">
+    <h1>Interactive Flow Lab（Canvas）</h1>
+    <div class="desc">
+      円柱後流の渦放出（カルマン渦列）を観察する2D流体デモ。<br>
+      表示切替：<b>染料</b>／<b>流速（虹色）</b>／<b>流線（カラーLIC）</b>。流速ベクトルも表示できます。<br>
+      Re表示（格子単位系の目安）：<b>Re = U·D/ν</b>（U:主流, D:円柱直径, ν:粘性）
+    </div>
 
-    <label>操作モード
-      <select id="mode">
-        <option value="flow" selected>流れ（注入）</option>
-        <option value="draw">障害物を描く</option>
-        <option value="erase">障害物を消す</option>
-      </select>
-    </label>
+    <div class="btns">
+      <button class="ok" id="startSim">計算開始</button>
+      <button class="danger" id="stopSim">計算停止</button>
+    </div>
 
-    <label>表示
-      <select id="view">
-        <option value="dye" selected>染料（Dye）</option>
-        <option value="speed">速度コンター（|u|）</option>
-      </select>
-    </label>
+    <div class="chips">
+      <div class="chip">
+        <div class="chipTitle">表示切替</div>
+        <div class="seg">
+          <button id="viewDye" class="toggleOn">染料</button>
+          <button id="viewSpeed">流速（虹色）</button>
+          <button id="viewLIC">流線（カラーLIC）</button>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.7);line-height:1.4;">
+          カラーLIC：色＝流速、明るさ＝LIC（流線テクスチャ）
+        </div>
+      </div>
+      <div class="chip">
+        <div class="chipTitle">流速ベクトル</div>
+        <button id="toggleVec">ベクトル：OFF</button>
+        <div style="font-size:11px;color:rgba(255,255,255,0.7);line-height:1.4;">
+          <span class="kbd">V</span>：ベクトルON/OFF　<span class="kbd">Space</span>：一時停止
+        </div>
+      </div>
+    </div>
 
-    <label><input id="showVec" type="checkbox" checked> 速度ベクトル</label>
+    <div class="row">
+      <label>染料の明るさ（ゲイン）</label>
+      <div class="val" id="dyeGainVal"></div>
+    </div>
+    <input id="dyeGain" type="range" min="0.4" max="3.0" step="0.05" value="1.6"/>
 
-    <label>ベクトル間引き
-      <input id="vecStep" type="range" min="4" max="24" value="10">
-      <span id="vecStepVal" class="chip">10</span>
-    </label>
+    <div class="row">
+      <label>ベクトル密度（大:密 / 小:疎）</label>
+      <div class="val" id="vecDenVal"></div>
+    </div>
+    <input id="vecDen" type="range" min="12" max="60" step="1" value="32"/>
 
-    <label>ベクトル倍率
-      <input id="vecScale" type="range" min="0.5" max="8" step="0.1" value="3.2">
-      <span id="vecScaleVal" class="chip">3.2</span>
-    </label>
+    <!-- ★追加：LICコントラスト -->
+    <div class="row">
+      <label>LIC コントラスト</label>
+      <div class="val" id="licContrastVal"></div>
+    </div>
+    <input id="licContrast" type="range" min="0.5" max="4.0" step="0.05" value="2.1"/>
 
-    <label>ブラシ半径
-      <input id="brush" type="range" min="1" max="16" value="6">
-      <span id="brushVal" class="chip">6</span>
-    </label>
+    <!-- ★追加：LIC ステップ数 -->
+    <div class="row">
+      <label>LIC ステップ数（多:滑らか / 重い）</label>
+      <div class="val" id="licStepsVal"></div>
+    </div>
+    <input id="licSteps" type="range" min="4" max="28" step="1" value="12"/>
 
-    <button id="clearObs">障害物クリア</button>
-    <button id="resetFlow">流れリセット</button>
+    <div class="row">
+      <label>格子解像度（高いほど重い）</label>
+      <div class="val" id="resVal"></div>
+    </div>
+    <input id="res" type="range" min="72" max="220" step="4" value="140"/>
 
-    <span style="flex-basis:100%; height:0;"></span>
+    <div class="row">
+      <label>タイムステップ dt</label>
+      <div class="val" id="dtVal"></div>
+    </div>
+    <input id="dt" type="range" min="0.1" max="2.0" step="0.05" value="0.7"/>
 
-    <label>格子
-      <select id="grid">
-        <option value="96">96</option>
-        <option value="128" selected>128</option>
-        <option value="160">160</option>
-        <option value="192">192</option>
-      </select>
-    </label>
+    <div class="row">
+      <label>粘性 ν（大:滑らか / 小:渦が残る）</label>
+      <div class="val" id="viscVal"></div>
+    </div>
+    <input id="visc" type="range" min="0.0" max="0.004" step="0.0001" value="0.0012"/>
 
-    <label>入口速度
-      <input id="uin" type="range" min="0" max="3" step="0.05" value="1.4">
-      <span id="uinVal" class="chip">1.40</span>
-    </label>
+    <div class="row">
+      <label>染料散逸（大:消える）</label>
+      <div class="val" id="dyeDissVal"></div>
+    </div>
+    <input id="dyeDiss" type="range" min="0.0" max="0.03" step="0.0005" value="0.006"/>
 
-    <label>入口高さ
-      <input id="inH" type="range" min="0.15" max="0.9" step="0.01" value="0.55">
-      <span id="inHVal" class="chip">0.55</span>
-    </label>
+    <div class="row">
+      <label>速度散逸（大:減衰）</label>
+      <div class="val" id="velDissVal"></div>
+    </div>
+    <input id="velDiss" type="range" min="0.0" max="0.03" step="0.0005" value="0.004"/>
 
-    <label>反復
-      <input id="iters" type="range" min="5" max="60" value="24">
-      <span id="itersVal" class="chip">24</span>
-    </label>
+    <div class="row">
+      <label>主流（左→右）速度 U</label>
+      <div class="val" id="inflowVal"></div>
+    </div>
+    <input id="inflow" type="range" min="0.0" max="2.5" step="0.05" value="1.25"/>
 
-    <label>粘性
-      <input id="visc" type="range" min="0" max="0.004" step="0.0002" value="0.0008">
-      <span id="viscVal" class="chip">0.0008</span>
-    </label>
+    <div class="row">
+      <label>円柱半径（相対）</label>
+      <div class="val" id="cylVal"></div>
+    </div>
+    <input id="cyl" type="range" min="0.04" max="0.18" step="0.005" value="0.10"/>
 
-    <label>拡散
-      <input id="diff" type="range" min="0" max="0.01" step="0.0005" value="0.0015">
-      <span id="diffVal" class="chip">0.0015</span>
-    </label>
+    <div class="row">
+      <label>障害物描画モード</label>
+      <div class="val" id="drawModeVal"></div>
+    </div>
+    <input id="drawMode" type="range" min="0" max="2" step="1" value="0"/>
 
-    <label>減衰
-      <input id="fade" type="range" min="0.94" max="1.0" step="0.001" value="0.996">
-      <span id="fadeVal" class="chip">0.996</span>
-    </label>
+    <div class="btns">
+      <button class="ok" id="resetFlow">流れリセット</button>
+      <button class="danger" id="clearObst">障害物クリア</button>
+    </div>
+
+    <div class="foot">
+      <b>操作</b>：ドラッグ＝注入/描画（モード切替）／ <span class="kbd">Space</span> 一時停止／ <span class="kbd">V</span> ベクトル表示<br>
+      <b>LIC</b>：ステップ数を増やすと滑らかですが負荷増。重い場合は格子解像度やステップ数を下げてください。
+    </div>
   </div>
-
-  <canvas id="c"></canvas>
+  <div class="canvasWrap panel" style="padding:0; overflow:hidden;">
+    <canvas id="c"></canvas>
+    <div class="hud" id="hud"></div>
+  
+    <!-- ★署名（テキスト）を追加 -->
+    <div id="signatureText">© 2026 Itakura Daisuke</div>
+  </div>
+  
+</div>
 
 <script>
-/**
- * Stable Fluids（Stam）系：半ラグランジュ移流 + 投影（発散除去）で非圧縮っぽく安定に動かす。[1](https://qiita.com/ponsuke0531/items/4629626a3e84bcd9398f)
- * 毎フレーム更新は requestAnimationFrame() を使用。[2](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-executionpolicy?view=powershell-7.5)
- */
+(() => {
+  // ==========================
+  // Utilities
+  // ==========================
+  const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+  const lerp  = (a,b,t) => a + (b-a)*t;
 
-// ===== UI =====
-const canvas = document.getElementById('c');
-const ctx = canvas.getContext('2d', { alpha:false });
-
-const modeSel = document.getElementById('mode');
-const viewSel = document.getElementById('view');
-const showVec = document.getElementById('showVec');
-const vecStep = document.getElementById('vecStep');
-const vecScale = document.getElementById('vecScale');
-
-const brush = document.getElementById('brush');
-const clearObsBtn = document.getElementById('clearObs');
-const resetFlowBtn = document.getElementById('resetFlow');
-
-const gridSel = document.getElementById('grid');
-const uin = document.getElementById('uin');
-const inH = document.getElementById('inH');
-const iters = document.getElementById('iters');
-const visc = document.getElementById('visc');
-const diff = document.getElementById('diff');
-const fade = document.getElementById('fade');
-
-const brushVal = document.getElementById('brushVal');
-const uinVal = document.getElementById('uinVal');
-const inHVal = document.getElementById('inHVal');
-const itersVal = document.getElementById('itersVal');
-const viscVal = document.getElementById('viscVal');
-const diffVal = document.getElementById('diffVal');
-const fadeVal = document.getElementById('fadeVal');
-const vecStepVal = document.getElementById('vecStepVal');
-const vecScaleVal = document.getElementById('vecScaleVal');
-
-function syncLabels(){
-  brushVal.textContent = brush.value;
-  uinVal.textContent = (+uin.value).toFixed(2);
-  inHVal.textContent = (+inH.value).toFixed(2);
-  itersVal.textContent = iters.value;
-  viscVal.textContent = (+visc.value).toFixed(4);
-  diffVal.textContent = (+diff.value).toFixed(4);
-  fadeVal.textContent = (+fade.value).toFixed(3);
-  vecStepVal.textContent = vecStep.value;
-  vecScaleVal.textContent = (+vecScale.value).toFixed(1);
-}
-[modeSel, viewSel, showVec, vecStep, vecScale, brush, gridSel, uin, inH, iters, visc, diff, fade]
-  .forEach(el => el.addEventListener('input', syncLabels));
-syncLabels();
-
-// ===== Simulation arrays =====
-let N = +gridSel.value;
-let size, u, v, u0, v0, dens, dens0, p, divv, solid;
-
-function IX(x,y){ return x + (N+2)*y; }
-
-function alloc(){
-  size = (N+2)*(N+2);
-  u = new Float32Array(size);
-  v = new Float32Array(size);
-  u0 = new Float32Array(size);
-  v0 = new Float32Array(size);
-  dens = new Float32Array(size);
-  dens0 = new Float32Array(size);
-  p = new Float32Array(size);
-  divv = new Float32Array(size);
-  solid = new Uint8Array(size); // 1: solid, 0: fluid
-  applyBaseWalls();
-}
-alloc();
-
-function resetFlow(){
-  u.fill(0); v.fill(0); u0.fill(0); v0.fill(0);
-  dens.fill(0); dens0.fill(0);
-  p.fill(0); divv.fill(0);
-}
-function clearObstacles(){
-  for(let j=1;j<=N;j++){
-    for(let i=1;i<=N;i++){
-      solid[IX(i,j)] = 0;
+  // HSV -> RGB (0..1)
+  function hsvToRgb(h, s, v) {
+    h = ((h % 1) + 1) % 1;
+    const i = Math.floor(h * 6);
+    const f = h * 6 - i;
+    const p = v * (1 - s);
+    const q = v * (1 - f * s);
+    const t = v * (1 - (1 - f) * s);
+    let r, g, b;
+    switch (i % 6) {
+      case 0: r=v; g=t; b=p; break;
+      case 1: r=q; g=v; b=p; break;
+      case 2: r=p; g=v; b=t; break;
+      case 3: r=p; g=q; b=v; break;
+      case 4: r=t; g=p; b=v; break;
+      case 5: r=v; g=p; b=q; break;
     }
+    return [r, g, b];
   }
-  applyBaseWalls();
-}
-resetFlowBtn.onclick = resetFlow;
-clearObsBtn.onclick = clearObstacles;
 
-gridSel.addEventListener('change', ()=>{
-  N = +gridSel.value;
-  alloc();
-  resetFlow();
-});
-
-// ===== Base walls: top/bottom are walls (solid) =====
-function applyBaseWalls(){
-  for(let i=0;i<=N+1;i++){
-    solid[IX(i,0)] = 1;
-    solid[IX(i,N+1)] = 1;
+  function sampleScalar(f, x, y, w, h) {
+    x = clamp(x, 0, w - 1.001);
+    y = clamp(y, 0, h - 1.001);
+    const x0 = x|0, y0 = y|0;
+    const x1 = x0 + 1, y1 = y0 + 1;
+    const sx = x - x0, sy = y - y0;
+    const i00 = x0 + y0*w;
+    const i10 = (x1 < w ? x1 : x0) + y0*w;
+    const i01 = x0 + (y1 < h ? y1 : y0)*w;
+    const i11 = (x1 < w ? x1 : x0) + (y1 < h ? y1 : y0)*w;
+    const a = lerp(f[i00], f[i10], sx);
+    const b = lerp(f[i01], f[i11], sx);
+    return lerp(a, b, sy);
   }
-}
-applyBaseWalls();
+  function sampleVector(u, v, x, y, w, h) {
+    return [sampleScalar(u, x, y, w, h), sampleScalar(v, x, y, w, h)];
+  }
 
-// ===== Obstacle painting =====
-function paintObstacle(nx, ny, rCells, makeSolid){
-  const cx = Math.floor(nx*N) + 1;
-  const cy = Math.floor(ny*N) + 1;
+  // ==========================
+  // Simulation Core (stable-fluids style)
+  // ==========================
+  class Fluid2D {
+    constructor(nx, ny) {
+      this.resize(nx, ny);
 
-  for(let j=-rCells; j<=rCells; j++){
-    for(let i=-rCells; i<=rCells; i++){
-      const ii = cx + i;
-      const jj = cy + j;
-      if (ii<1 || ii>N || jj<1 || jj>N) continue;
-      if (i*i + j*j > rCells*rCells) continue;
+      // adjustable
+      this.dt = 0.7;
+      this.visc = 0.0012;
+      this.velDiss = 0.004;
+      this.dyeDiss = 0.006;
+      this.inflowU = 1.25;
+      this.cylRadius = 0.10;
 
-      const id = IX(ii,jj);
-      solid[id] = makeSolid ? 1 : 0;
+      // fixed internals
+      this.pIters = 36;
+      this.vortConf = 2.2;
 
-      if (makeSolid){
-        u[id]=0; v[id]=0; u0[id]=0; v0[id]=0;
-        dens[id]=0; dens0[id]=0;
-      }
+      this.paused = false;
+      this.showVectors = false;
+
+      this._seedCylinder();
     }
-  }
-  applyBaseWalls();
-}
 
-// ===== Boundary conditions =====
-let dt = 0.016;
+    resize(nx, ny) {
+      this.nx = nx; this.ny = ny;
+      const n = nx * ny;
 
-function applyObstacleBoundary(b, x){
-  for(let j=1;j<=N;j++){
-    for(let i=1;i<=N;i++){
-      const id = IX(i,j);
-      if (solid[id]) {
-        x[id] = 0;
-      } else {
-        // simple no-slip-ish damping near solids
-        if (b===1){
-          if (solid[IX(i-1,j)] || solid[IX(i+1,j)]) x[id] *= 0.2;
-        }
-        if (b===2){
-          if (solid[IX(i,j-1)] || solid[IX(i,j+1)]) x[id] *= 0.2;
+      this.u  = new Float32Array(n);
+      this.v  = new Float32Array(n);
+      this.u0 = new Float32Array(n);
+      this.v0 = new Float32Array(n);
+
+      this.d  = new Float32Array(n);
+      this.d0 = new Float32Array(n);
+
+      this.p   = new Float32Array(n);
+      this.div = new Float32Array(n);
+
+      this.solid = new Uint8Array(n);
+      this.curl  = new Float32Array(n);
+    }
+
+    idx(x,y){ return x + y*this.nx; }
+
+    clearFlow() {
+      this.u.fill(0); this.v.fill(0);
+      this.u0.fill(0); this.v0.fill(0);
+      this.d.fill(0); this.d0.fill(0);
+      this.p.fill(0); this.div.fill(0);
+    }
+
+    clearObstacles(keepCylinder=true) {
+      this.solid.fill(0);
+      if (keepCylinder) this._seedCylinder();
+    }
+
+    _seedCylinder() {
+      const cx = Math.floor(this.nx * 0.32);
+      const cy = Math.floor(this.ny * 0.5);
+      const r  = Math.floor(Math.min(this.nx, this.ny) * this.cylRadius);
+      for (let y=0;y<this.ny;y++){
+        for (let x=0;x<this.nx;x++){
+          const dx = x - cx, dy = y - cy;
+          if (dx*dx + dy*dy <= r*r) this.solid[this.idx(x,y)] = 1;
         }
       }
     }
-  }
-}
 
-function set_bnd(b, x){
-  // top/bottom reflect
-  for (let i=1;i<=N;i++){
-    x[IX(i,0)]   = b===2 ? -x[IX(i,1)] : x[IX(i,1)];
-    x[IX(i,N+1)] = b===2 ? -x[IX(i,N)] : x[IX(i,N)];
-  }
-  // corners
-  x[IX(0,0)]     = x[IX(1,0)];
-  x[IX(0,N+1)]   = x[IX(1,N+1)];
-  x[IX(N+1,0)]   = x[IX(N,0)];
-  x[IX(N+1,N+1)] = x[IX(N,N+1)];
+    setCylinderRadius(relR) {
+      this.cylRadius = relR;
+      this.solid.fill(0);
+      this._seedCylinder();
+    }
 
-  applyObstacleBoundary(b, x);
-}
-
-// ===== Linear solver (Gauss-Seidel) =====
-function lin_solve(b, x, x0, a, c){
-  const iter = +iters.value;
-  for (let k=0;k<iter;k++){
-    for (let j=1;j<=N;j++){
-      for (let i=1;i<=N;i++){
-        const id = IX(i,j);
-        if (solid[id]) { x[id]=0; continue; }
-        x[id] = (x0[id] + a*(x[IX(i-1,j)] + x[IX(i+1,j)] + x[IX(i,j-1)] + x[IX(i,j+1)]))/c;
+    paintSolid(px, py, brushR, add=true) {
+      const r2 = brushR*brushR;
+      const x0 = Math.floor(px - brushR), x1 = Math.ceil(px + brushR);
+      const y0 = Math.floor(py - brushR), y1 = Math.ceil(py + brushR);
+      for (let y=y0; y<=y1; y++){
+        if (y<0 || y>=this.ny) continue;
+        for (let x=x0; x<=x1; x++){
+          if (x<0 || x>=this.nx) continue;
+          const dx = x - px, dy = y - py;
+          if (dx*dx + dy*dy <= r2) {
+            this.solid[this.idx(x,y)] = add ? 1 : 0;
+            if (add) {
+              const i = this.idx(x,y);
+              this.u[i]=this.v[i]=0;
+              this.d[i]=0;
+            }
+          }
+        }
       }
     }
-    set_bnd(b,x);
-  }
-}
 
-function diffuse(b, x, x0, diffCoef){
-  const a = dt*diffCoef*N*N;
-  lin_solve(b, x, x0, a, 1+4*a);
-}
-
-function advect(b, d, d0, u, v){
-  const dt0 = dt*N;
-  for (let j=1;j<=N;j++){
-    for (let i=1;i<=N;i++){
-      const id = IX(i,j);
-      if (solid[id]) { d[id]=0; continue; }
-
-      let x = i - dt0*u[id];
-      let y = j - dt0*v[id];
-      if (x<0.5) x=0.5; if (x>N+0.5) x=N+0.5;
-      if (y<0.5) y=0.5; if (y>N+0.5) y=N+0.5;
-
-      const i0 = Math.floor(x), i1 = i0+1;
-      const j0 = Math.floor(y), j1 = j0+1;
-      const s1 = x - i0, s0 = 1-s1;
-      const t1 = y - j0, t0 = 1-t1;
-
-      d[id] =
-        s0*(t0*d0[IX(i0,j0)] + t1*d0[IX(i0,j1)]) +
-        s1*(t0*d0[IX(i1,j0)] + t1*d0[IX(i1,j1)]);
-    }
-  }
-  set_bnd(b,d);
-}
-
-function project(u, v, p, div){
-  for (let j=1;j<=N;j++){
-    for (let i=1;i<=N;i++){
-      const id = IX(i,j);
-      if (solid[id]) { div[id]=0; p[id]=0; continue; }
-      div[id] = -0.5*(u[IX(i+1,j)] - u[IX(i-1,j)] + v[IX(i,j+1)] - v[IX(i,j-1)]) / N;
-      p[id] = 0;
-    }
-  }
-  set_bnd(0, div); set_bnd(0, p);
-  lin_solve(0, p, div, 1, 4);
-
-  for (let j=1;j<=N;j++){
-    for (let i=1;i<=N;i++){
-      const id = IX(i,j);
-      if (solid[id]) { u[id]=0; v[id]=0; continue; }
-      u[id] -= 0.5*N*(p[IX(i+1,j)] - p[IX(i-1,j)]);
-      v[id] -= 0.5*N*(p[IX(i,j+1)] - p[IX(i,j-1)]);
-    }
-  }
-  set_bnd(1, u); set_bnd(2, v);
-}
-
-// ===== Inlet / Outlet =====
-function applyInletOutlet(){
-  const U = +uin.value;
-  const hFrac = +inH.value;
-  const h = Math.floor(hFrac * N);
-  const j0 = Math.max(2, Math.floor((N - h)/2));
-  const j1 = Math.min(N-1, j0 + h);
-
-  // inlet at x=1
-  for(let j=1;j<=N;j++){
-    const id = IX(1,j);
-    if (j>=j0 && j<=j1 && !solid[id]){
-      u[id] = U;
-      v[id] = 0;
-      dens[id] += 1.5; // dye for visibility
-    } else {
-      u[id] *= 0.2;
-      v[id] *= 0.2;
-    }
-  }
-
-  // outlet at x=N (zero-gradient)
-  for(let j=1;j<=N;j++){
-    const id = IX(N,j);
-    const im1 = IX(N-1,j);
-    if (!solid[id]){
-      u[id] = u[im1];
-      v[id] = v[im1];
-      dens[id] = dens[im1];
-    } else {
-      u[id]=0; v[id]=0; dens[id]=0;
-    }
-  }
-
-  // ghost cells
-  for(let j=1;j<=N;j++){
-    u[IX(0,j)] = u[IX(1,j)];
-    v[IX(0,j)] = v[IX(1,j)];
-    dens[IX(0,j)] = dens[IX(1,j)];
-
-    u[IX(N+1,j)] = u[IX(N,j)];
-    v[IX(N+1,j)] = v[IX(N,j)];
-    dens[IX(N+1,j)] = dens[IX(N,j)];
-  }
-}
-
-// ===== Steps =====
-function vel_step(u, v, u0, v0, viscCoef){
-  for (let i=0;i<size;i++){ u[i]+=u0[i]; v[i]+=v0[i]; u0[i]=0; v0[i]=0; }
-  diffuse(1, u0, u, viscCoef);
-  diffuse(2, v0, v, viscCoef);
-  project(u0, v0, p, divv);
-  advect(1, u, u0, u0, v0);
-  advect(2, v, v0, u0, v0);
-  project(u, v, p, divv);
-}
-
-function dens_step(x, x0, u, v, diffCoef){
-  for (let i=0;i<size;i++){ x[i]+=x0[i]; x0[i]=0; }
-  diffuse(0, x0, x, diffCoef);
-  advect(0, x, x0, u, v);
-  const f = +fade.value;
-  for (let i=0;i<size;i++){ x[i]*=f; if (solid[i]) x[i]=0; }
-}
-
-// ===== Flow injection (drag) =====
-function splat(nx, ny, fx, fy, amount){
-  const x = Math.floor(nx*N)+1;
-  const y = Math.floor(ny*N)+1;
-  const r = 3;
-  for (let j=-r;j<=r;j++){
-    for (let i=-r;i<=r;i++){
-      const ii = x+i, jj = y+j;
-      if (ii<1||ii>N||jj<1||jj>N) continue;
-      const id = IX(ii,jj);
-      if (solid[id]) continue;
-      const w = Math.exp(-(i*i+j*j)/(r*r));
-      u0[id] += fx*w;
-      v0[id] += fy*w;
-      dens0[id] += amount*w;
-    }
-  }
-}
-
-// ===== Pointer input =====
-const pointer = {down:false, px:0, py:0, rect:null};
-
-canvas.addEventListener('pointerdown', (e)=>{
-  pointer.down = true;
-  pointer.rect = canvas.getBoundingClientRect();
-  pointer.px = e.clientX; pointer.py = e.clientY;
-  canvas.setPointerCapture(e.pointerId);
-});
-
-canvas.addEventListener('pointermove', (e)=>{
-  if (!pointer.down) return;
-  const r = pointer.rect;
-  const nx = (e.clientX - r.left) / r.width;
-  const ny = (e.clientY - r.top) / r.height;
-
-  const dx = (e.clientX - pointer.px) / r.width;
-  const dy = (e.clientY - pointer.py) / r.height;
-  pointer.px = e.clientX; pointer.py = e.clientY;
-
-  const mode = modeSel.value;
-  const br = +brush.value;
-
-  if (mode === 'flow'){
-    const fx = dx * 90;
-    const fy = dy * 90;
-    const amount = 10.0;
-    splat(nx, ny, fx, fy, amount);
-  } else if (mode === 'draw'){
-    paintObstacle(nx, ny, br, true);
-  } else if (mode === 'erase'){
-    paintObstacle(nx, ny, br, false);
-  }
-});
-
-canvas.addEventListener('pointerup', ()=>{ pointer.down=false; });
-canvas.addEventListener('pointercancel', ()=>{ pointer.down=false; });
-
-window.addEventListener('keydown', (e)=>{
-  const k = e.key.toLowerCase();
-  if (k === 'r') resetFlow();
-  if (k === 'v') showVec.checked = !showVec.checked;
-});
-
-// ===== Render (offscreen at NxN, then scale to screen) =====
-const off = document.createElement('canvas');
-const offCtx = off.getContext('2d', { willReadFrequently: false });
-function resize(){
-  const r = canvas.getBoundingClientRect();
-  const dpr = Math.max(1, window.devicePixelRatio || 1);
-  canvas.width = Math.floor(r.width*dpr);
-  canvas.height = Math.floor(r.height*dpr);
-  ctx.setTransform(dpr,0,0,dpr,0,0);
-}
-window.addEventListener('resize', resize);
-resize();
-
-function ensureOffscreen(){
-  if (off.width !== N || off.height !== N){
-    off.width = N;
-    off.height = N;
-  }
-}
-ensureOffscreen();
-
-function hsvToRgb(h, s, v){
-  // h:0..1
-  const i = Math.floor(h*6);
-  const f = h*6 - i;
-  const p = v*(1-s);
-  const q = v*(1-f*s);
-  const t = v*(1-(1-f)*s);
-  let r,g,b;
-  switch(i%6){
-    case 0: r=v,g=t,b=p; break;
-    case 1: r=q,g=v,b=p; break;
-    case 2: r=p,g=v,b=t; break;
-    case 3: r=p,g=q,b=v; break;
-    case 4: r=t,g=p,b=v; break;
-    case 5: r=v,g=p,b=q; break;
-  }
-  return [Math.floor(r*255), Math.floor(g*255), Math.floor(b*255)];
-}
-
-// speed normalization (smooth max to reduce flicker)
-let speedMaxSmooth = 1e-6;
-
-function renderField(){
-  ensureOffscreen();
-  const img = offCtx.createImageData(N, N);
-  const data = img.data;
-
-  let curMax = 1e-6;
-  if (viewSel.value === 'speed'){
-    for(let j=1;j<=N;j++){
-      for(let i=1;i<=N;i++){
-        const id = IX(i,j);
-        if (solid[id]) continue;
-        const sp = Math.hypot(u[id], v[id]);
-        if (sp > curMax) curMax = sp;
+    splat(px, py, fx, fy, amount, radius) {
+      const r2 = radius*radius;
+      const x0 = Math.floor(px - radius), x1 = Math.ceil(px + radius);
+      const y0 = Math.floor(py - radius), y1 = Math.ceil(py + radius);
+      for (let y=y0; y<=y1; y++){
+        if (y<0 || y>=this.ny) continue;
+        for (let x=x0; x<=x1; x++){
+          if (x<0 || x>=this.nx) continue;
+          const dx = x - px, dy = y - py;
+          const w = Math.exp(-(dx*dx+dy*dy)/(r2*0.65));
+          const i = this.idx(x,y);
+          if (this.solid[i]) continue;
+          this.u[i] += fx * w;
+          this.v[i] += fy * w;
+          this.d[i] += amount * w;
+        }
       }
     }
-    speedMaxSmooth = Math.max(curMax, speedMaxSmooth*0.97);
-  }
 
-  for(let y=0; y<N; y++){
-    const j = y+1;
-    for(let x=0; x<N; x++){
-      const i = x+1;
-      const id = IX(i,j);
-      const k = (x + y*N)*4;
+    step() {
+      if (this.paused) return;
 
-      if (solid[id]){
-        data[k+0]=70; data[k+1]=70; data[k+2]=70; data[k+3]=255;
-        continue;
+      const nx=this.nx, ny=this.ny, n=nx*ny;
+      const dt=this.dt;
+
+      // inflow on left boundary + jitter
+      const U = this.inflowU;
+      const now = performance.now();
+      for (let y=1; y<ny-1; y++){
+        for (let x=0; x<Math.max(2, (nx*0.03)|0); x++){
+          const i = x + y*nx;
+          if (this.solid[i]) continue;
+          const jitter = 0.08*Math.sin(0.12*y + now*0.002);
+          this.u[i] = U;
+          this.v[i] = jitter;
+          this.d[i] = Math.max(this.d[i], 0.15);
+        }
       }
 
-      if (viewSel.value === 'dye'){
-        const d = dens[id];
-        const vv = Math.max(0, Math.min(255, d*10));
-        data[k+0] = Math.min(255, vv*0.9);
-        data[k+1] = Math.min(255, vv*0.7);
-        data[k+2] = Math.min(255, 180 + vv*0.3);
-        data[k+3] = 255;
+      this.u0.set(this.u); this.v0.set(this.v);
+      this.d0.set(this.d);
+
+      if (this.vortConf > 0.0001) this._vorticityConfinement(this.vortConf, dt);
+
+      this._diffuse(this.u, this.u0, this.visc, dt);
+      this._diffuse(this.v, this.v0, this.visc, dt);
+
+      this._project(this.u, this.v, this.p, this.div, this.pIters);
+
+      this.u0.set(this.u); this.v0.set(this.v);
+      this._advectVelocity(this.u, this.v, this.u0, this.v0, dt);
+
+      this._project(this.u, this.v, this.p, this.div, this.pIters);
+
+      this._advectScalar(this.d, this.d0, this.u, this.v, dt);
+      this._applyDissipation(this.d, this.dyeDiss, dt);
+
+      this._applyDissipation(this.u, this.velDiss, dt);
+      this._applyDissipation(this.v, this.velDiss, dt);
+
+      for (let i=0;i<n;i++){
+        if (this.solid[i]) { this.u[i]=0; this.v[i]=0; this.d[i]=0; }
+      }
+    }
+
+    _applyDissipation(f, k, dt){
+      if (k<=0) return;
+      const s = Math.max(0, 1 - k*dt);
+      for (let i=0;i<f.length;i++) f[i] *= s;
+    }
+
+    _diffuse(x, x0, diff, dt) {
+      const nx=this.nx, ny=this.ny;
+      const a = diff * dt;
+      const iters = 18;
+      for (let k=0;k<iters;k++){
+        for (let y=1;y<ny-1;y++){
+          for (let xIdx=1;xIdx<nx-1;xIdx++){
+            const i = xIdx + y*nx;
+            if (this.solid[i]) { x[i]=0; continue; }
+            const iL=i-1, iR=i+1, iB=i-nx, iT=i+nx;
+
+            const vL = this.solid[iL] ? x[i] : x[iL];
+            const vR = this.solid[iR] ? x[i] : x[iR];
+            const vB = this.solid[iB] ? x[i] : x[iB];
+            const vT = this.solid[iT] ? x[i] : x[iT];
+
+            x[i] = (x0[i] + a*(vL+vR+vB+vT)) / (1 + 4*a);
+          }
+        }
+        this._setBoundary(x);
+      }
+    }
+
+    _advectScalar(d, d0, u, v, dt) {
+      const nx=this.nx, ny=this.ny;
+      for (let y=1;y<ny-1;y++){
+        for (let x=1;x<nx-1;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) { d[i]=0; continue; }
+          const ux = u[i], vy = v[i];
+          const px = x - dt*ux;
+          const py = y - dt*vy;
+          d[i] = sampleScalar(d0, px, py, nx, ny);
+        }
+      }
+      this._setBoundary(d);
+    }
+
+    _advectVelocity(u, v, u0, v0, dt) {
+      const nx=this.nx, ny=this.ny;
+      for (let y=1;y<ny-1;y++){
+        for (let x=1;x<nx-1;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) { u[i]=0; v[i]=0; continue; }
+          const ux = u0[i], vy = v0[i];
+          const px = x - dt*ux;
+          const py = y - dt*vy;
+          const [nu, nv] = sampleVector(u0, v0, px, py, nx, ny);
+          u[i] = nu; v[i] = nv;
+        }
+      }
+      this._setBoundary(u);
+      this._setBoundary(v);
+    }
+
+    _project(u, v, p, div, iters) {
+      const nx=this.nx, ny=this.ny;
+
+      for (let y=1;y<ny-1;y++){
+        for (let x=1;x<nx-1;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) { div[i]=0; p[i]=0; continue; }
+          const iL=i-1, iR=i+1, iB=i-nx, iT=i+nx;
+
+          const uL = this.solid[iL] ? 0 : u[iL];
+          const uR = this.solid[iR] ? 0 : u[iR];
+          const vB = this.solid[iB] ? 0 : v[iB];
+          const vT = this.solid[iT] ? 0 : v[iT];
+
+          div[i] = -0.5*(uR - uL + vT - vB);
+          p[i] = 0;
+        }
+      }
+      this._setBoundary(div);
+      this._setBoundary(p);
+
+      for (let k=0;k<iters;k++){
+        for (let y=1;y<ny-1;y++){
+          for (let x=1;x<nx-1;x++){
+            const i = x + y*nx;
+            if (this.solid[i]) { p[i]=0; continue; }
+            const iL=i-1, iR=i+1, iB=i-nx, iT=i+nx;
+
+            const pL = this.solid[iL] ? p[i] : p[iL];
+            const pR = this.solid[iR] ? p[i] : p[iR];
+            const pB = this.solid[iB] ? p[i] : p[iB];
+            const pT = this.solid[iT] ? p[i] : p[iT];
+
+            p[i] = (div[i] + pL + pR + pB + pT) / 4;
+          }
+        }
+        this._setBoundary(p);
+      }
+
+      for (let y=1;y<ny-1;y++){
+        for (let x=1;x<nx-1;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) { u[i]=0; v[i]=0; continue; }
+          const iL=i-1, iR=i+1, iB=i-nx, iT=i+nx;
+
+          const pL = this.solid[iL] ? p[i] : p[iL];
+          const pR = this.solid[iR] ? p[i] : p[iR];
+          const pB = this.solid[iB] ? p[i] : p[iB];
+          const pT = this.solid[iT] ? p[i] : p[iT];
+
+          u[i] -= 0.5*(pR - pL);
+          v[i] -= 0.5*(pT - pB);
+        }
+      }
+      this._setBoundary(u);
+      this._setBoundary(v);
+    }
+
+    _vorticityConfinement(eps, dt) {
+      const nx=this.nx, ny=this.ny;
+      const curl=this.curl;
+
+      for (let y=1;y<ny-1;y++){
+        for (let x=1;x<nx-1;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) { curl[i]=0; continue; }
+          const dvdx = 0.5*(this.v[i+1]-this.v[i-1]);
+          const dudy = 0.5*(this.u[i+nx]-this.u[i-nx]);
+          curl[i] = dvdx - dudy;
+        }
+      }
+
+      for (let y=2;y<ny-2;y++){
+        for (let x=2;x<nx-2;x++){
+          const i = x + y*nx;
+          if (this.solid[i]) continue;
+
+          const cL = Math.abs(curl[i-1]), cR = Math.abs(curl[i+1]);
+          const cB = Math.abs(curl[i-nx]), cT = Math.abs(curl[i+nx]);
+
+          let gx = 0.5*(cR - cL);
+          let gy = 0.5*(cT - cB);
+          const gl = Math.hypot(gx, gy) + 1e-6;
+          gx /= gl; gy /= gl;
+
+          const c = curl[i];
+          this.u[i] += (eps * gy * c) * dt;
+          this.v[i] += (-eps * gx * c) * dt;
+        }
+      }
+    }
+
+    _setBoundary(f) {
+      const nx=this.nx, ny=this.ny;
+      for (let x=0;x<nx;x++){
+        f[x] = f[x + nx];
+        f[x + (ny-1)*nx] = f[x + (ny-2)*nx];
+      }
+      for (let y=0;y<ny;y++){
+        f[y*nx] = f[1 + y*nx];
+        f[(nx-1) + y*nx] = f[(nx-2) + y*nx];
+      }
+    }
+  }
+
+  // ==========================
+  // Rendering + Color LIC
+  // ==========================
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d", { alpha:false });
+  const hud = document.getElementById("hud");
+
+  let W=0, H=0, dpr=1;
+
+  let viewMode = "dye";
+
+  // user controls
+  let dyeGain = 1.6;
+  let vecDensityAcross = 32;
+
+  // LIC controls
+  let licSteps = 12;          // slider
+  let licContrast = 2.1;      // slider
+  const LIC_DS = 1.0;         // step size (grid units)
+  let licSigma = 6.0;         // will update with steps
+
+  // speed normalization smoothing for coloring
+  let speedMaxSmooth = 1.0;
+
+  // LIC buffers
+  let licNoise = null;   // Float32Array in [0,1]
+  let licOut   = null;   // Float32Array in [0,1]
+  let licWeights = null; // Float32Array (0..licSteps)
+
+  function updateLICKernel() {
+    // sigma scales with steps (heuristic)
+    licSigma = Math.max(2.0, licSteps * 0.55);
+
+    licWeights = new Float32Array(licSteps + 1);
+    let sum = 0;
+    for (let k=0;k<=licSteps;k++){
+      const w = Math.exp(-(k*k)/(2*licSigma*licSigma));
+      licWeights[k] = w;
+      sum += (k===0 ? w : 2*w);
+    }
+    for (let k=0;k<=licSteps;k++) licWeights[k] /= sum;
+  }
+
+  function initLICBuffers(nx, ny) {
+    const n = nx*ny;
+    licNoise = new Float32Array(n);
+    licOut   = new Float32Array(n);
+
+    // fixed static noise
+    for (let i=0;i<n;i++) licNoise[i] = Math.random();
+    updateLICKernel();
+  }
+
+  // LIC computation (scalar intensity)
+  function computeLIC(sim) {
+    const nx = sim.nx, ny = sim.ny;
+    const n  = nx*ny;
+    if (!licNoise || licNoise.length !== n) initLICBuffers(nx, ny);
+
+    const u = sim.u, v = sim.v;
+    const solid = sim.solid;
+
+    // update smooth speed max for coloring + low-speed fading
+    let vmax = 1e-6;
+    for (let i=0;i<n;i++){
+      if (solid[i]) continue;
+      const s = Math.hypot(u[i], v[i]);
+      if (s>vmax) vmax=s;
+    }
+    speedMaxSmooth = lerp(speedMaxSmooth, Math.max(0.2, vmax), 0.08);
+
+    for (let y=0;y<ny;y++){
+      for (let x=0;x<nx;x++){
+        const i = x + y*nx;
+        if (solid[i]) { licOut[i] = 0.0; continue; }
+
+        // base sample
+        let acc = licWeights[0] * licNoise[i];
+        let wsum = licWeights[0];
+
+        // integrate both directions along streamline
+        for (let dir=-1; dir<=1; dir+=2){
+          let px = x;
+          let py = y;
+          for (let k=1; k<=licSteps; k++){
+            const vel = sampleVector(u, v, px, py, nx, ny);
+            let ux = vel[0], vy = vel[1];
+            const mag = Math.hypot(ux, vy) + 1e-8;
+
+            // normalize direction; advance
+            ux /= mag; vy /= mag;
+            px += dir * LIC_DS * ux;
+            py += dir * LIC_DS * vy;
+
+            if (px < 0 || px > nx-1 || py < 0 || py > ny-1) break;
+
+            const nval = sampleScalar(licNoise, px, py, nx, ny);
+            const w = licWeights[k];
+            acc += w * nval;
+            wsum += w;
+          }
+        }
+
+        let val = (wsum > 0 ? acc / wsum : acc); // 0..1 roughly
+
+        // contrast (around 0.5)
+        // val' = (val-0.5)*contrast + 0.5
+        val = clamp((val - 0.5) * licContrast + 0.5, 0, 1);
+
+        // fade out where speed is tiny (keeps LIC from looking like static noise)
+        const sp = Math.hypot(u[i], v[i]);
+        const t = clamp(sp / speedMaxSmooth, 0, 1);
+        val *= (0.20 + 0.80*Math.pow(t, 0.35));
+
+        licOut[i] = val;
+      }
+    }
+  }
+
+  function resizeCanvas(){
+    const rect = canvas.getBoundingClientRect();
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    W = Math.floor(rect.width * dpr);
+    H = Math.floor(rect.height * dpr);
+    canvas.width = W;
+    canvas.height = H;
+  }
+  window.addEventListener("resize", resizeCanvas);
+
+  function pickGrid(base){
+    const aspect = (canvas.getBoundingClientRect().width) / (canvas.getBoundingClientRect().height);
+    let nx = base;
+    let ny = Math.max(40, Math.round(base / aspect));
+    return [nx, ny];
+  }
+
+  resizeCanvas();
+  let [nx, ny] = pickGrid(140);
+  let sim = new Fluid2D(nx, ny);
+
+  initLICBuffers(sim.nx, sim.ny);
+
+  let img = ctx.createImageData(nx, ny);
+
+  // Reynolds number (grid-units)
+  function computeRe(){
+    const nu = sim.visc;
+    const U  = sim.inflowU;
+    const D  = 2 * Math.min(sim.nx, sim.ny) * sim.cylRadius; // grid units
+    if (nu <= 1e-9) return Infinity;
+    return U * D / nu;
+  }
+  function fmtRe(Re){
+    if (!isFinite(Re)) return "∞";
+    if (Re >= 1000) return Re.toFixed(0);
+    if (Re >= 100) return Re.toFixed(1);
+    return Re.toFixed(2);
+  }
+
+  function render(){
+    const n = sim.nx * sim.ny;
+    if (img.width !== sim.nx || img.height !== sim.ny){
+      img = ctx.createImageData(sim.nx, sim.ny);
+    }
+    const data = img.data;
+
+    // speed max (rainbow mode)
+    let speedMax = 1e-6;
+    if (viewMode === "speed"){
+      for (let i=0;i<n;i++){
+        if (sim.solid[i]) continue;
+        const s = Math.hypot(sim.u[i], sim.v[i]);
+        if (s > speedMax) speedMax = s;
+      }
+      speedMaxSmooth = lerp(speedMaxSmooth, Math.max(0.2, speedMax), 0.08);
+    }
+
+    // LIC needed only in lic mode
+    if (viewMode === "lic"){
+      computeLIC(sim);
+    }
+
+    for (let i=0;i<n;i++){
+      const isSolid = sim.solid[i];
+      let r=0,g=0,b=0;
+
+      if (isSolid){
+        r=70; g=70; b=70;
+      } else if (viewMode === "dye"){
+        const d = clamp(sim.d[i] * dyeGain, 0, 1.5);
+        const uu = sim.u[i], vv = sim.v[i];
+        const sp = Math.min(1, Math.hypot(uu,vv) * 0.25);
+
+        const d1 = clamp(d,0,1);
+        const glow = Math.pow(clamp(d,0,1.5), 0.85);
+
+        r = 12 + 45*sp + 40*glow;
+        g = 24 + 210*d1  + 40*sp + 30*glow;
+        b = 55 + 255*d1  + 90*sp + 50*glow;
+
+      } else if (viewMode === "speed"){
+        const sp = Math.hypot(sim.u[i], sim.v[i]);
+        const t = clamp(sp / speedMaxSmooth, 0, 1);
+        const hue = (240*(1 - t)) / 360; // blue->red
+        const sat = 1.0;
+        const val = 0.18 + 0.82*Math.pow(t, 0.75);
+        const [rr,gg,bb] = hsvToRgb(hue, sat, val);
+        r = 255*rr; g = 255*gg; b = 255*bb;
+
       } else {
-        // speed contour (colormap)
-        const sp = Math.hypot(u[id], v[id]);
-        const t = Math.max(0, Math.min(1, sp / (speedMaxSmooth + 1e-9)));
-        // blue->green->yellow->red (HSV 0.66..0)
-        const h = (0.66*(1-t));
-        const [rC,gC,bC] = hsvToRgb(h, 1.0, 1.0);
-        // darken low speeds
-        const scale = 0.15 + 0.85*t;
-        data[k+0] = Math.floor(rC*scale);
-        data[k+1] = Math.floor(gC*scale);
-        data[k+2] = Math.floor(bC*scale);
-        data[k+3] = 255;
+        // ===== Color LIC =====
+        // Hue from speed, Value from LIC intensity
+        const sp = Math.hypot(sim.u[i], sim.v[i]);
+        const t = clamp(sp / speedMaxSmooth, 0, 1);
+        const hue = (240*(1 - t)) / 360; // blue->red
+        const sat = 1.0;
+
+        // LIC intensity -> brightness, with small floor
+        const lic = licOut[i]; // 0..1
+        const val = 0.10 + 0.90*lic;
+
+        const [rr,gg,bb] = hsvToRgb(hue, sat, val);
+
+        // a subtle dark base improves readability
+        r = 255*rr;
+        g = 255*gg;
+        b = 255*bb;
+      }
+
+      data[4*i+0] = clamp(r,0,255);
+      data[4*i+1] = clamp(g,0,255);
+      data[4*i+2] = clamp(b,0,255);
+      data[4*i+3] = 255;
+    }
+
+    ctx.imageSmoothingEnabled = true;
+    ctx.clearRect(0,0,W,H);
+
+    if (!render.off){
+      render.off = document.createElement("canvas");
+      render.offCtx = render.off.getContext("2d");
+    }
+    render.off.width = sim.nx;
+    render.off.height = sim.ny;
+    render.offCtx.putImageData(img, 0, 0);
+    ctx.drawImage(render.off, 0, 0, W, H);
+
+    if (sim.showVectors) drawVectors();
+
+    const modeLabel = (viewMode === "dye") ? "染料" : (viewMode === "speed" ? "流速（虹色）" : "流線（カラーLIC）");
+    const Re = computeRe();
+
+    hud.innerHTML =
+      `表示: ${modeLabel}　Re: ${fmtRe(Re)}　` +
+      `Grid: ${sim.nx}×${sim.ny}　dt: ${sim.dt.toFixed(2)}　ν: ${sim.visc.toFixed(4)}　U: ${sim.inflowU.toFixed(2)}　` +
+      `${sim.paused ? "⏸ 停止中" : "▶ 計算中"}` +
+      `<br>LIC: steps=${licSteps} contrast=${licContrast.toFixed(2)}　Drag: 注入/描画`;
+  }
+
+  function drawVectors(){
+    const target = Math.max(8, vecDensityAcross|0);
+    const step = Math.max(4, Math.floor(sim.nx / target));
+
+    ctx.save();
+    ctx.globalAlpha = 0.62;
+    ctx.lineWidth = 1.1;
+    ctx.strokeStyle = "rgba(255,255,255,0.72)";
+    ctx.fillStyle   = "rgba(255,255,255,0.72)";
+
+    for (let y=step; y<sim.ny-step; y+=step){
+      for (let x=step; x<sim.nx-step; x+=step){
+        const i = x + y*sim.nx;
+        if (sim.solid[i]) continue;
+
+        const u = sim.u[i], v = sim.v[i];
+        const sx = (x / (sim.nx-1)) * W;
+        const sy = (y / (sim.ny-1)) * H;
+
+        const scale = 10 * dpr;
+        const ex = sx + u*scale;
+        const ey = sy + v*scale;
+
+        ctx.beginPath();
+        ctx.moveTo(sx, sy);
+        ctx.lineTo(ex, ey);
+        ctx.stroke();
+
+        const ang = Math.atan2(ey - sy, ex - sx);
+        const ah = 4 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(ex, ey);
+        ctx.lineTo(ex - ah*Math.cos(ang - 0.55), ey - ah*Math.sin(ang - 0.55));
+        ctx.lineTo(ex - ah*Math.cos(ang + 0.55), ey - ah*Math.sin(ang + 0.55));
+        ctx.closePath();
+        ctx.fill();
       }
     }
+    ctx.restore();
   }
 
-  offCtx.putImageData(img, 0, 0);
+  // ==========================
+  // UI wiring
+  // ==========================
+  const $ = (id)=>document.getElementById(id);
+  const bind = (id, fmt, setter) => {
+    const el = $(id);
+    const out = $(id+"Val");
+    const update = () => { out.textContent = fmt(+el.value); setter(+el.value); };
+    el.addEventListener("input", update);
+    update();
+  };
 
-  // scale to screen
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  ctx.imageSmoothingEnabled = true;
-  ctx.clearRect(0,0,w,h);
-  ctx.drawImage(off, 0,0, w,h);
-}
+  function setViewMode(mode){
+    viewMode = mode;
+    $("viewDye").classList.toggle("toggleOn", mode==="dye");
+    $("viewSpeed").classList.toggle("toggleOn", mode==="speed");
+    $("viewLIC").classList.toggle("toggleOn", mode==="lic");
+  }
+  function syncVecButton(){
+    const b = $("toggleVec");
+    b.textContent = `ベクトル：${sim.showVectors ? "ON" : "OFF"}`;
+    b.classList.toggle("toggleOn", sim.showVectors);
+  }
 
-function drawVectors(){
-  if (!showVec.checked) return;
+  $("viewDye").addEventListener("click", ()=>setViewMode("dye"));
+  $("viewSpeed").addEventListener("click", ()=>setViewMode("speed"));
+  $("viewLIC").addEventListener("click", ()=>setViewMode("lic"));
+  setViewMode("dye");
 
-  const w = canvas.clientWidth, h = canvas.clientHeight;
-  const step = +vecStep.value;
-  const sc = +vecScale.value;
+  $("toggleVec").addEventListener("click", ()=>{ sim.showVectors = !sim.showVectors; syncVecButton(); });
+  syncVecButton();
 
-  // arrow styling
-  ctx.save();
-  ctx.globalAlpha = 0.9;
-  ctx.strokeStyle = '#ffffff';
-  ctx.fillStyle = '#ffffff';
-  ctx.lineWidth = 1;
+  $("startSim").addEventListener("click", ()=>{ sim.paused = false; });
+  $("stopSim").addEventListener("click", ()=>{ sim.paused = true; });
 
-  // arrow head size in pixels
-  const head = 4;
+  bind("dyeGain", v => v.toFixed(2), v => dyeGain = v);
+  bind("vecDen", v => `${v|0}`, v => vecDensityAcross = v|0);
 
-  // map grid cell center to canvas
-  for(let j=1; j<=N; j+=step){
-    for(let i=1; i<=N; i+=step){
-      const id = IX(i,j);
-      if (solid[id]) continue;
+  // ★LIC sliders
+  bind("licContrast", v => v.toFixed(2), v => { licContrast = v; });
+  bind("licSteps", v => `${v|0}`, v => {
+    licSteps = v|0;
+    updateLICKernel(); // update gaussian weights
+  });
 
-      const ux = u[id];
-      const vy = v[id];
-      const mag = Math.hypot(ux, vy);
-      if (mag < 1e-3) continue;
+  bind("res", v => `${v|0}`, v => {
+    const [gx, gy] = pickGrid(v|0);
+    const old = sim;
+    sim = new Fluid2D(gx, gy);
 
-      const x0 = ( (i-0.5) / N ) * w;
-      const y0 = ( (j-0.5) / N ) * h;
+    sim.dt = old.dt;
+    sim.visc = old.visc;
+    sim.velDiss = old.velDiss;
+    sim.dyeDiss = old.dyeDiss;
+    sim.inflowU = old.inflowU;
+    sim.paused = old.paused;
+    sim.showVectors = old.showVectors;
+    sim.setCylinderRadius(old.cylRadius);
 
-      // scale vector to pixel
-      const sx = ux * sc * (w/N);
-      const sy = vy * sc * (h/N);
+    // re-init LIC buffers to new size
+    initLICBuffers(sim.nx, sim.ny);
 
-      // clamp to avoid huge arrows
-      const maxLen = 18;
-      const len = Math.hypot(sx, sy);
-      const factor = len > maxLen ? (maxLen/len) : 1.0;
+    syncVecButton();
+  });
 
-      const x1 = x0 + sx*factor;
-      const y1 = y0 + sy*factor;
+  bind("dt", v => v.toFixed(2), v => sim.dt = v);
+  bind("visc", v => v.toFixed(4), v => sim.visc = v);
+  bind("dyeDiss", v => v.toFixed(4), v => sim.dyeDiss = v);
+  bind("velDiss", v => v.toFixed(4), v => sim.velDiss = v);
+  bind("inflow", v => v.toFixed(2), v => sim.inflowU = v);
+  bind("cyl", v => v.toFixed(3), v => sim.setCylinderRadius(v));
+  bind("drawMode", v => (["注入（染料+力）","障害物を描く","障害物を消す"][v|0]), v => {});
 
-      // color by magnitude (optional)
-      const t = Math.max(0, Math.min(1, mag / (speedMaxSmooth + 1e-9)));
-      ctx.globalAlpha = 0.25 + 0.75*t;
+  $("resetFlow").addEventListener("click", ()=>sim.clearFlow());
+  $("clearObst").addEventListener("click", ()=>{ sim.clearObstacles(true); });
 
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
+  window.addEventListener("keydown", (e)=>{
+    if (e.code === "Space") sim.paused = !sim.paused;
+    if (e.key === "v" || e.key === "V") { sim.showVectors = !sim.showVectors; syncVecButton(); }
+  });
 
-      // arrow head
-      const ang = Math.atan2(y1-y0, x1-x0);
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x1 - head*Math.cos(ang - Math.PI/6), y1 - head*Math.sin(ang - Math.PI/6));
-      ctx.lineTo(x1 - head*Math.cos(ang + Math.PI/6), y1 - head*Math.sin(ang + Math.PI/6));
-      ctx.closePath();
-      ctx.fill();
+  // ==========================
+  // Pointer interaction
+  // ==========================
+  let pointerDown=false;
+  let lastX=0, lastY=0;
+
+  function canvasToGrid(ev){
+    const rect = canvas.getBoundingClientRect();
+    const x = (ev.clientX - rect.left) / rect.width;
+    const y = (ev.clientY - rect.top) / rect.height;
+    return [x*(sim.nx-1), y*(sim.ny-1)];
+  }
+
+  canvas.addEventListener("pointerdown", (ev)=>{
+    pointerDown = true;
+    canvas.setPointerCapture(ev.pointerId);
+    const [gx, gy] = canvasToGrid(ev);
+    lastX=gx; lastY=gy;
+  });
+  canvas.addEventListener("pointerup", ()=>{ pointerDown=false; });
+
+  canvas.addEventListener("pointermove", (ev)=>{
+    if (!pointerDown) return;
+    const [gx, gy] = canvasToGrid(ev);
+    const dx = gx - lastX;
+    const dy = gy - lastY;
+    lastX=gx; lastY=gy;
+
+    const mode = +$("drawMode").value|0;
+    if (mode === 0) {
+      const fx = dx * 1.6;
+      const fy = dy * 1.6;
+      const amount = 0.55;
+      const radius = Math.max(3, Math.min(sim.nx, sim.ny) * 0.03);
+      sim.splat(gx, gy, fx, fy, amount, radius);
+    } else if (mode === 1) {
+      const radius = Math.max(4, Math.min(sim.nx, sim.ny) * 0.025);
+      sim.paintSolid(gx, gy, radius, true);
+    } else {
+      const radius = Math.max(6, Math.min(sim.nx, sim.ny) * 0.03);
+      sim.paintSolid(gx, gy, radius, false);
     }
+  });
+
+  // ==========================
+  // Animation loop
+  // ==========================
+  function tick(){
+    const substeps = 2;
+    for (let k=0;k<substeps;k++) sim.step();
+    render();
+    requestAnimationFrame(tick);
   }
-
-  ctx.restore();
-}
-
-// ===== Main loop =====
-let last = performance.now();
-function frame(t){
-  const elapsed = (t - last)/1000;
-  last = t;
-  dt = Math.min(0.03, Math.max(0.008, elapsed));
-
-  applyBaseWalls();
-
-  vel_step(u, v, u0, v0, +visc.value);
-  dens_step(dens, dens0, u, v, +diff.value);
-
-  applyInletOutlet();
-
-  renderField();
-  drawVectors();
-
-  // requestAnimationFrame is one-shot; call again for continuous animation [2](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.security/set-executionpolicy?view=powershell-7.5)
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
+  tick();
+})();
 </script>
 </body>
 </html>
-``
